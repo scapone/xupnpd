@@ -1871,6 +1871,75 @@ static int lua_http_sendurl(lua_State* L)
     return 1;
 }
 
+static int lua_http_sendmcasturl1(lua_State* L)
+{
+    const char* addr=lua_tostring(L,1);
+    const char* iface=lua_gettop(L)>1?lua_tostring(L,2):0;
+    int dgsize=lua_gettop(L)>2?lua_tointeger(L,3):0;
+
+    if(dgsize<=0)
+        dgsize=4096;
+
+    int rc=0;
+
+    if(!addr || !core::http_client_fp)
+        { lua_pushinteger(L,rc); return 1; }
+
+    alarm(core::http_timeout);
+
+    mcast::mcast_grp grp;
+    grp.init(addr,iface,1,1);
+
+    int fd=grp.join();
+
+    if(fd!=-1)
+    {
+        char* buf=(char*)malloc(dgsize);
+
+        if(buf)
+        {
+            fflush(core::http_client_fp);
+
+            int pnum=0;
+
+            int dfd=fileno(core::http_client_fp);
+
+            int n;
+
+            sockaddr_in sin;
+            socklen_t sin_len=sizeof(sin);
+
+            rc=1;
+
+            while((n=recvfrom(fd,buf,dgsize,0,(sockaddr*)&sin,&sin_len))>0)
+            {
+                // TODO: extract payload from RTP
+
+                if(mcast::verb_fp && !pnum)
+                {
+                    fprintf(mcast::verb_fp,"multicast source: %s:%i\n",inet_ntoa(sin.sin_addr),ntohs(sin.sin_port));
+                    pnum++;
+                }  
+
+                if(write(dfd,buf,n)!=n)
+                    break;
+                else        
+                    alarm(core::http_timeout);
+            }
+
+            free(buf);
+        }
+
+        grp.leave(fd);
+    }
+
+    alarm(0);
+
+    lua_pushinteger(L,rc);
+
+    return 1;
+}
+
 static int lua_http_sendmcasturl(lua_State* L)
 {
     const char* addr=lua_tostring(L,1);

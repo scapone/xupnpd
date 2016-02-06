@@ -117,7 +117,14 @@ void mpeg2_packet::adjust_pts()
         mpeg2_pes* pes = get_pes_header();
 
         uint64_t pts = get_pts(pes->pts);
+
         pts += 3 * 60 * 60 * 90000;
+
+        if (pts > 0x1ffffffffLL)
+        {
+            pts = 0x1ffffffffLL;
+        }
+
         set_pts(pes->pts, pts);
 
         int pid = get_pid();
@@ -125,7 +132,14 @@ void mpeg2_packet::adjust_pts()
         if (pes->extension[1] & 0x40)
         {
             uint64_t dts = get_pts(pes->dts);
+            
             dts += 3 * 60 * 60 * 90000;
+            
+            if (dts > 0x1ffffffffLL)
+            {
+                dts = 0x1ffffffffLL;
+            }
+
             set_pts(pes->dts, dts);
 
             //printf("[lua_http_change_pcr] PID: %d, PTS: %llu, DTS: %llu\n", pid, pts, dts);
