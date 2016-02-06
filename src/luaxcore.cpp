@@ -29,6 +29,9 @@
 #include <netdb.h>
 #include <ctype.h>
 #include "compat.h"
+#include "mpeg2.h"
+
+using namespace mpeg2;
 
 // HTML5
 // ACE Stream (http://torrent-tv.ru/)
@@ -694,8 +697,12 @@ namespace core
                                 char* p=strpbrk(tmp,"\r\n");
                                 if(p)
                                     *p=0;
+
+                                printf("[process_http] fgets: %s\n", tmp);
+                                
                                 if(!*tmp)
                                     break;
+
                                 add_http_hdr_to_table(L,tmp,idx++);
                             }
 
@@ -713,6 +720,8 @@ namespace core
                                     int n=0;
                                     while((n=fread(tmp,1,sizeof(tmp)>len?len:sizeof(tmp),fp))>0 && len>0)
                                     {
+                                        printf("[process_http] fread: %s\n", tmp);
+
                                         luaL_addlstring(&B,tmp,n);
                                         len-=n;
                                     }
@@ -1341,7 +1350,10 @@ static int lua_http_send(lua_State* L)
     const char* s=lua_tolstring(L,1,&l);
 
     if(core::http_client_fp)
+    {
+        printf("%s", s);
         fwrite(s,1,l,core::http_client_fp);
+    }
 
     return 0;
 }
@@ -1349,6 +1361,7 @@ static int lua_http_send(lua_State* L)
 static int lua_http_sendfile(lua_State* L)
 {
     const char* s=lua_tostring(L,1);
+    printf("[lua_http_sendfile] path:%s\n", s);
 
     if(!s || !core::http_client_fp)
         return 0;
@@ -1368,12 +1381,14 @@ static int lua_http_sendfile(lua_State* L)
         }
     }
 
-    char buf[1024];
+    char buf[1316];
     ssize_t n;
 
     if(lua_gettop(L)>2 && lua_type(L,3)!=LUA_TNIL)
     {
         off64_t l=(off64_t)lua_tonumber(L,3);
+        printf("[lua_http_sendfile] file length: %i\n", l);
+
         if(l>0)
         {
             while(l>0 && (n=read(fd,buf,sizeof(buf)>l?l:sizeof(buf)))>0)
@@ -1390,6 +1405,57 @@ static int lua_http_sendfile(lua_State* L)
     }
 
     close(fd);
+
+    return 0;
+}
+
+static int lua_http_sendmqueue(lua_State* L)
+{
+    const char* name = lua_tostring(L,1);
+    printf("[lua_http_sendmqueue] %s\n", name);
+
+    if(!core::http_client_fp)
+        return 0;
+
+    fflush(core::http_client_fp);
+
+    char buf[1316];
+    ssize_t n;
+
+    int dfd=fileno(core::http_client_fp);
+    int bytes_sent = 0;
+    
+    message_queue mq(name);
+    mq.open();
+    
+    while((n = mq.receive(buf, sizeof(buf))) > 0)
+    {
+        /*if (n != 1316)
+        {
+            printf("[lua_http_sendmqueue] first bytes received from MQ: %i, these are: %#hhx %#hhx\n", n, buf[0], buf[1]);
+        }*/
+
+        int nn = write(dfd, buf, n);
+        
+        if(nn == -1)
+        {
+            printf("[lua_http_sendmqueue] %s, write to socket ended (bytes sent: %i)\n", name, bytes_sent);
+            close(dfd);
+            break;
+        }
+        else
+        {
+            bytes_sent += nn;
+        }
+    }
+
+    if (n == -1)
+    {
+        printf("[lua_http_sendmqueue] %s, queue is empty (bytes sent: %i)\n", name, bytes_sent);
+    }
+
+    mq.close();
+    mq.unlink();
 
     return 0;
 }
@@ -1844,21 +1910,118 @@ static int lua_http_sendmcasturl(lua_State* L)
             socklen_t sin_len=sizeof(sin);
 
             rc=1;
+            int bytes_sent = 0;
+            bool mq_mode = false;
+            
+            /* create the message queues */
+            message_queue mainq("/main");
+            mainq.create(4000);
 
-            while((n=recvfrom(fd,buf,dgsize,0,(sockaddr*)&sin,&sin_len))>0)
+            message_queue epilogq("/epilog");
+            epilogq.create(4000); // 3057
+
+            // Set up the file descriptor set.
+            fd_set fds;
+            FD_ZERO(&fds) ;
+            FD_SET(fd, &fds) ;
+
+            timeval tv;
+            tv.tv_sec = 1;  // set 1 sec timeout
+            tv.tv_usec = 0;
+            
+            if (select (fd + 1, &fds, NULL, NULL, &tv) > 0)
             {
-                // TODO: extract payload from RTP
-
-                if(mcast::verb_fp && !pnum)
+                while((n=recvfrom(fd,buf,dgsize,0,(sockaddr*)&sin,&sin_len))>0)
                 {
-                    fprintf(mcast::verb_fp,"multicast source: %s:%i\n",inet_ntoa(sin.sin_addr),ntohs(sin.sin_port));
-                    pnum++;
-                }  
+                    if(mcast::verb_fp && !pnum)
+                    {
+                        fprintf(mcast::verb_fp,"multicast source: %s:%i\n",inet_ntoa(sin.sin_addr),ntohs(sin.sin_port));
+                        pnum++;
+                    }  
 
-                if(write(dfd,buf,n)!=n)
-                    break;
-                else        
+                    if (mq_mode)
+                    {
+                        if (mainq.send(buf, n) == -1)
+                        {
+                            printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %i)\n", bytes_sent);
+                            mainq.close();
+                            break;
+                        }                    
+                    }
+                    else
+                    {
+                        int nn = write(dfd, buf, n);
+
+                        if(nn == -1)
+                        {
+                            printf("[lua_http_sendmcasturl] write to socket ended (bytes sent: %i)\n", bytes_sent);
+                            close(dfd);
+                            
+                            mq_mode = true;
+                        }
+
+                        int delta = bytes_sent - 1618044;
+                        if (delta > 0)
+                        {
+                            size_t msg_len = n;
+                            int msg_off = 0;
+
+                            if (delta < n)
+                            {
+                                msg_len = delta;
+                                msg_off = nn - msg_len;
+                                
+                                printf("[lua_http_sendmcasturl] /main, writing to queue started (offset: %i, length: %i)\n", msg_off, msg_len);
+                            }
+
+                            if (mainq.send(buf + msg_off, msg_len) == -1)
+                            {
+                                printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %i)\n", bytes_sent);
+                                mainq.close();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (bytes_sent < 4022144)
+                    {
+                        for (int i = 0; i < 7; i++)
+                        {
+                            mpeg2::mpeg2_ts* ts = (mpeg2::mpeg2_ts*)(buf + 188 * i);
+                            mpeg2_packet packet(ts);
+                            packet.adjust_pts();
+                        }
+
+                        int delta = 4022144 - bytes_sent;
+                        if (delta < n)
+                        {
+                            printf("[lua_http_sendmcasturl] epilog finished (bytes sent: %i)\n", bytes_sent + delta);
+                            
+                            epilogq.send(buf, delta);
+                            epilogq.close();
+                        }
+                        else
+                        {
+                            epilogq.send(buf, n);
+                        }
+                    }
+
                     alarm(core::http_timeout);
+
+                    bytes_sent += n;
+                }
+
+                printf("[lua_http_sendmcasturl] main loop ended (bytes sent: %i)\n", bytes_sent);
+            }
+            else
+            {
+                perror("[lua_http_sendmcasturl] socket timeout");
+
+                mainq.close();
+                mainq.unlink();
+
+                epilogq.close();
+                epilogq.unlink();
             }
 
             free(buf);
@@ -2367,6 +2530,7 @@ int luaopen_luaxcore(lua_State* L)
         {"timeout",lua_http_timeout},
         {"sendurl_buffer_size",lua_http_sendurl_buffer_size},
         {"user_agent",lua_http_user_agent},
+        {"sendmqueue",lua_http_sendmqueue},
         {0,0}
     };
 

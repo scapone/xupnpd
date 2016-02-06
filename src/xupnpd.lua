@@ -1,7 +1,7 @@
 cfg={}
 
 -- multicast interface for SSDP exchange, 'eth0', 'br0', 'br-lan' for example
-cfg.ssdp_interface='lo'
+cfg.ssdp_interface='{1A977C72-8F89-4739-BF10-65CD8C267026}'
 
 -- 'cfg.ssdp_loop' enables multicast loop (if player and server in one host)
 cfg.ssdp_loop=1
@@ -32,7 +32,7 @@ cfg.debug=1
 --cfg.udpxy_url='http://192.168.1.1:4022'
 
 -- downstream interface for builtin multicast proxy (comment 'cfg.udpxy_url' for processing 'udp://@...' playlists)
-cfg.mcast_interface='eth1'
+cfg.mcast_interface='{1A977C72-8F89-4739-BF10-65CD8C267026}'
 
 -- 'cfg.proxy' enables proxy for injection DLNA headers to stream
 -- 0-off, 1-radio, 2-radio/TV
@@ -57,7 +57,7 @@ cfg.group=true
 cfg.sort_files=false
 
 -- Device name
-cfg.name='UPnP-IPTV'
+cfg.name='DELL: UPnP-IPTV'
 
 -- static device UUID, '60bd2fb3-dabe-cb14-c766-0e319b54c29a' for example or nil
 cfg.uuid='60bd2fb3-dabe-cb14-c766-0e319b54c29a'

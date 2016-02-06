@@ -3,7 +3,7 @@ LUA     = lua-5.1.4
 STATIC  = false
 
 CFLAGS  = -fno-exceptions -fno-rtti -O2 -I$(LUA) -L$(LUA)
-SRC     = main.cpp soap.cpp mem.cpp mcast.cpp luaxlib.cpp luaxcore.cpp luajson.cpp luajson_parser.cpp
+SRC     = main.cpp soap.cpp mem.cpp mcast.cpp luaxlib.cpp luaxcore.cpp luajson.cpp luajson_parser.cpp mpeg2.cpp
 LUAMYCFLAGS = -DLUA_USE_LINUX
 
 SDK_8_09 = /u01/home/shocker_old/staff/openwrt_8_09/staging_dir

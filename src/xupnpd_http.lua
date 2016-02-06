@@ -443,9 +443,40 @@ function http_handler(what,from,port,msg)
 
         local mtype,extras=playlist_item_type(pls)
 
+        -- 0 - 1618043 (1618044)
+        -- n - end (4022144)
+        -- 1618044 - end (total)
+
+        local flen=10000000000 --2147483647
+        local ffrom=0
+        local flen_total=flen
+
+        if msg.range and flen and flen>0 then
+            local f,t=string.match(msg.range,'bytes=(.*)-(.*)')
+
+            f=tonumber(f)
+            t=tonumber(t)
+
+            if not f then f=0 end
+            if not t then t=flen-1 end
+
+            if f>t or t+1>flen then http_send_headers(416) return end
+
+            ffrom=f
+            flen=t-f+1
+        end
+
+        print(string.format('flen_total: %s, flen: %s, ffrom: %s', flen_total, flen, ffrom))
+
+        if msg.range then
+            http.send('HTTP/1.1 206 Partial Content\r\n')
+        else
+            http.send('HTTP/1.1 200 OK\r\n')
+        end
+
         http.send(string.format(
-            'HTTP/1.1 200 OK\r\nPragma: no-cache\r\nCache-control: no-cache\r\nDate: %s\r\nServer: %s\r\n'..
-            'Connection: close\r\nContent-Type: %s\r\nEXT:\r\n',
+            'Pragma: no-cache\r\nCache-control: no-cache\r\nDate: %s\r\nServer: %s\r\n'..
+            'Connection: Keep-Alive\r\nContent-Type: %s\r\nEXT:\r\n',
             os.date('!%a, %d %b %Y %H:%M:%S GMT'),ssdp_server,mtype[3]))
 
         if cfg.dlna_headers==true then http.send('TransferMode.DLNA.ORG: Streaming\r\nContentFeatures.DLNA.ORG: '..extras..'\r\n') end
@@ -477,10 +508,24 @@ function http_handler(what,from,port,msg)
                     http.send('Content-Length: 65535\r\n')
                 end
 
-                http.send('Accept-Ranges: none\r\n\r\n')
+                http.send(string.format('Accept-Ranges: bytes\r\nContent-Length: %s\r\n', flen))
+        
+                if msg.range and flen and flen>0 then
+                    http.send(string.format('Content-Range: bytes %s-%s/%s\r\n',ffrom,ffrom+flen-1,flen_total))
+                end
+
+                http.send('\r\n')
 
                 if string.find(pls.url,'^udp://@') then
-                    http.sendmcasturl(string.sub(pls.url,8),cfg.mcast_interface,2048)
+       
+                    if ffrom == 0 then
+                        http.sendmcasturl(string.sub(pls.url, 8), cfg.mcast_interface, 1316)
+                    elseif flen == 4022144 then
+                        http.sendmqueue("/epilog")
+                    else
+                        http.sendmqueue("/main")
+                    end
+
                 else
                     local rc,location
                     location=pls.url
@@ -567,12 +612,21 @@ function http_handler(what,from,port,msg)
             flen=t-f+1
         end
 
+        print(string.format('flen_total: %d, flen: %d, ffrom: %d', flen_total, flen, ffrom))
+
         local mtype,extras=playlist_item_type(pls)
 
+        if msg.range then
+            http.send('HTTP/1.1 206 Partial Content\r\n')
+        else
+            http.send('HTTP/1.1 200 OK\r\n')
+        end
+
         http.send(string.format(
-            'HTTP/1.1 200 OK\r\nPragma: no-cache\r\nCache-control: no-cache\r\nDate: %s\r\nServer: %s\r\n'..
-            'Connection: close\r\nContent-Type: %s\r\nEXT:\r\n',
-            os.date('!%a, %d %b %Y %H:%M:%S GMT'),ssdp_server,mtype[3]))
+            'Content-Type: %s\r\nCache-control: no-cache\r\nConnection: close\r\n'..
+            'Date: Sat, 21 Nov 2015 09:12:18 GMT\r\nrealTimeInfo.dlna.org: DLNA.ORG_TLAG=*\r\nServer: Windows 8, UPnP/1.0 DLNADOC/1.50, Serviio/1.5.2\r\n'..
+            'transferMode.dlna.org: Streaming\r\n',
+            mtype[3]))
 
         if flen then
             http.send(string.format('Accept-Ranges: bytes\r\nContent-Length: %s\r\n',flen))
@@ -580,7 +634,7 @@ function http_handler(what,from,port,msg)
             http.send('Accept-Ranges: none\r\n')
         end
 
-        if cfg.dlna_headers==true then http.send('TransferMode.DLNA.ORG: Streaming\r\nContentFeatures.DLNA.ORG: '..extras..'\r\n') end
+        --if cfg.dlna_headers==true then http.send('TransferMode.DLNA.ORG: Streaming\r\nContentFeatures.DLNA.ORG: '..extras..'\r\n') end
 
         if cfg.content_disp==true then
             http.send(string.format('Content-Disposition: attachment; filename=\"%s.%s\"\r\n',pls.objid,pls.type))
@@ -600,7 +654,16 @@ function http_handler(what,from,port,msg)
 
             core.sendevent('status',util.getpid(),from_ip..' '..pls.name)
 
-            http.sendfile(pls.path,ffrom,flen)
+            if flen == 4022144 then
+                http.sendmqueue("/epilog")
+               --ffrom = 0
+            elseif ffrom == 1618044 then
+               --ffrom = 0
+               --flen = 4022143
+                http.sendmqueue("/main")
+            else
+                http.sendfile(pls.path, ffrom, flen)
+            end
         end
 
     else
