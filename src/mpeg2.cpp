@@ -27,8 +27,8 @@ int mpeg2_packet::get_pid()
 
 uint64_t mpeg2_packet::get_pts(uint8_t pts_a[])
 {
-    printf("[lua_http_change_pcr] PTS get: %hhx %hhx %hhx %hhx %hhx\n",
-      pts_a[0], pts_a[1], pts_a[2], pts_a[3], pts_a[4]);
+    //printf("[lua_http_change_pcr] PTS get: %hhx %hhx %hhx %hhx %hhx\n",
+    //  pts_a[0], pts_a[1], pts_a[2], pts_a[3], pts_a[4]);
 
     uint64_t raw;
     raw = ((uint64_t)pts_a[0] << 32) // this is a 64bit integer, lowest 36 bits contain a timestamp with markers
@@ -60,8 +60,8 @@ void mpeg2_packet::set_pts(uint8_t pts_a[], uint64_t pts)
     pts_a[4] &= 0x01;
     pts_a[4] |= (pts << 1) & 0xfe;
 
-    printf("[lua_http_change_pcr] PTS set: %hhx %hhx %hhx %hhx %hhx\n",
-      pts_a[0], pts_a[1], pts_a[2], pts_a[3], pts_a[4]);
+    //printf("[lua_http_change_pcr] PTS set: %hhx %hhx %hhx %hhx %hhx\n",
+    //  pts_a[0], pts_a[1], pts_a[2], pts_a[3], pts_a[4]);
 }
 
 bool mpeg2_packet::has_pcr(int pid)
@@ -100,7 +100,7 @@ bool mpeg2_packet::has_pts()
     return false;
 }
 
-void mpeg2_packet::adjust_pts()
+void mpeg2_packet::adjust_pts(int seconds)
 {
     /*if (has_pcr(-1))
     {
@@ -112,32 +112,32 @@ void mpeg2_packet::adjust_pts()
          ts->pcr[0], ts->pcr[1], ts->pcr[2], ts->pcr[3], ts->pcr[4], ts->pcr[5]);
     }*/
 
-    if (has_pts())
+    int pid = get_pid();
+
+    if (has_pts() && (pid > 0x1f))
     {
         mpeg2_pes* pes = get_pes_header();
 
         uint64_t pts = get_pts(pes->pts);
 
-        pts += 3 * 60 * 60 * 90000;
+        pts += (seconds - 7) * 90000;
 
-        if (pts > 0x1ffffffffLL)
+        if (pts > PTS_MAX_VALUE)
         {
-            pts = 0x1ffffffffLL;
+            pts = PTS_MAX_VALUE;
         }
 
         set_pts(pes->pts, pts);
-
-        int pid = get_pid();
 
         if (pes->extension[1] & 0x40)
         {
             uint64_t dts = get_pts(pes->dts);
             
-            dts += 3 * 60 * 60 * 90000;
+            dts += (seconds - 7) * 90000;
             
-            if (dts > 0x1ffffffffLL)
+            if (dts > DTS_MAX_VALUE)
             {
-                dts = 0x1ffffffffLL;
+                dts = DTS_MAX_VALUE;
             }
 
             set_pts(pes->dts, dts);
@@ -171,9 +171,9 @@ bool mpeg2_packet::suppress_pid(mpeg2_ts* ts, int suppress_pid, int suppress_cou
 
 void message_queue::create(int maxmsg)
 {
-    printf("[message_queue::create] %s, size: %i\n", _name, maxmsg);
+    unlink();
 
-    mq_unlink(_name);
+    printf("[message_queue::create] %s, size: %i\n", _name, maxmsg);
 
     /* initialize the queue attributes */
     mq_attr attr;
@@ -209,7 +209,7 @@ void message_queue::open()
     printf("[message_queue::open] %s, messages currently in queue: %i\n", _name, curmsgs);
 }
 
-void message_queue::close()
+void message_queue::close(bool unlink)
 {
     printf("[message_queue::close] %s\n", _name);
 
@@ -217,6 +217,11 @@ void message_queue::close()
     if (status == -1)
     {
         perror("[message_queue::close] Failed closing message queue");
+    }
+
+    if (unlink)
+    {
+        message_queue::unlink();
     }
 
     _mq = 0;

@@ -6,6 +6,12 @@
 
 namespace mpeg2
 {
+    const int M806_PROGRESS_LENGTH = 4022144;
+    const int M806_STREAM_OFFSET = 1618044;
+
+    const uint64_t PTS_MAX_VALUE = 0x1ffffffffLL;
+    const uint64_t DTS_MAX_VALUE = 0x1ffffffffLL;
+
     typedef struct tagMPEG2_AF
     {
         uint8_t adapt_len;
@@ -62,7 +68,7 @@ namespace mpeg2
         mpeg2_packet(mpeg2_ts* ts) : _ts(ts) {};
         ~mpeg2_packet() {};
         
-        void adjust_pts();
+        void adjust_pts(int seconds);
         bool suppress_pid(mpeg2_ts* ts, int suppress_pid, int suppress_count);
     private:
         bool has_pcr(int pid);
@@ -83,8 +89,7 @@ namespace mpeg2
         
         void create(int maxmsg);
         void open();
-        void close();
-        void unlink();
+        void close(bool unlink = false);
         int send(const char *msg_ptr, size_t msg_len);
         ssize_t receive(char *msg_ptr, size_t msg_len);
     private:
@@ -92,6 +97,7 @@ namespace mpeg2
         const char* _name;
 
         int get_curmsgs();
+        void unlink();
     };
 }
 

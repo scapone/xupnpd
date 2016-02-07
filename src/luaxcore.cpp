@@ -1376,6 +1376,7 @@ static int lua_http_sendfile(lua_State* L)
     {
         if(lseek64(fd,(off64_t)lua_tonumber(L,2),SEEK_SET)==(off64_t)-1)
         {
+            printf("[lua_http_sendfile] close fd\n");
             close(fd);
             return 0;
         }
@@ -1386,16 +1387,108 @@ static int lua_http_sendfile(lua_State* L)
 
     if(lua_gettop(L)>2 && lua_type(L,3)!=LUA_TNIL)
     {
-        off64_t l=(off64_t)lua_tonumber(L,3);
+        off64_t l = (off64_t)lua_tonumber(L,3);
+
         printf("[lua_http_sendfile] file length: %i\n", l);
 
         if(l>0)
         {
-            while(l>0 && (n=read(fd,buf,sizeof(buf)>l?l:sizeof(buf)))>0)
-                if(write(fileno(core::http_client_fp),buf,n)!=n)
-                    break;
+            int dfd=fileno(core::http_client_fp);
+            int bytes_sent = 0;
+            bool mq_mode = false;
+            
+            /* create the message queues */
+            message_queue mainq("/main");
+            mainq.create(32768);
+
+            message_queue epilogq("/epilog");
+            epilogq.create(3057);
+            
+            while(l > 0 && (n = read(fd, buf, l < sizeof(buf) ? l : sizeof(buf)))>0)
+            {                
+                if (l % 1000 == 0)
+                {
+                    printf("[lua_http_sendfile] file length left: %i\n", l);
+                }
+
+                if (mq_mode)
+                {
+                    if (mainq.send(buf, n) == -1)
+                    {
+                        printf("[lua_http_sendfile] MQ is full: bytes sent: %i\n", bytes_sent);
+                        mainq.close();
+                        break;
+                    }                    
+                }
                 else
-                    l-=n;
+                {
+                    int nn = write(dfd, buf, n);
+
+                    if(nn == -1)
+                    {
+                        printf("[lua_http_sendfile] write to socket ended, bytes sent: %i\n", bytes_sent);
+                        close(dfd);
+                        
+                        mq_mode = true;
+                    }
+
+                    int delta = bytes_sent - M806_STREAM_OFFSET;
+                    if (delta > 0)
+                    {
+                        size_t msg_len = n;
+                        int msg_off = 0;
+
+                        if (delta < n)
+                        {
+                            msg_len = delta;
+                            msg_off = nn - msg_len;
+                            
+                            printf("[lua_http_sendfile] /main, writing to queue started (offset: %i, length: %i)\n", msg_off, msg_len);
+                        }
+
+                        if (mainq.send(buf + msg_off, msg_len) == -1)
+                        {
+                            printf("[lua_http_sendfile] /main, queue is full (bytes sent: %i)\n", bytes_sent);
+                            mainq.close();
+                            break;
+                        }
+                    }
+                }
+
+                if (bytes_sent < M806_PROGRESS_LENGTH)
+                {
+                    for (int i = 0; i < 7; i++)
+                    {
+                        mpeg2::mpeg2_ts* ts = (mpeg2::mpeg2_ts*)(buf + 188 * i);
+                        mpeg2_packet packet(ts);
+                        packet.adjust_pts(3 * 60 * 60);
+                    }
+
+                    int delta = M806_PROGRESS_LENGTH - bytes_sent;
+                    if (delta < n)
+                    {
+                        printf("[lua_http_sendfile] epilog finished (bytes sent: %i)\n", bytes_sent + delta);
+                        
+                        epilogq.send(buf, delta);
+                        epilogq.close();
+                    }
+                    else
+                    {
+                        epilogq.send(buf, n);
+                    }
+                }
+
+                l -= n;
+                bytes_sent += n;
+
+                //printf("[lua_http_sendfile] file bytes left l: %i\n", l);
+            }
+
+            if (l == 0)
+            {
+                printf("[lua_http_sendfile] file successfully sent: %i, l: %i\n", bytes_sent, l);
+                mainq.close();
+            }
         }
     }else
     {
@@ -1454,8 +1547,7 @@ static int lua_http_sendmqueue(lua_State* L)
         printf("[lua_http_sendmqueue] %s, queue is empty (bytes sent: %i)\n", name, bytes_sent);
     }
 
-    mq.close();
-    mq.unlink();
+    mq.close(true);
 
     return 0;
 }
@@ -2029,7 +2121,7 @@ static int lua_http_sendmcasturl(lua_State* L)
                             mq_mode = true;
                         }
 
-                        int delta = bytes_sent - 1618044;
+                        int delta = bytes_sent - M806_STREAM_OFFSET;
                         if (delta > 0)
                         {
                             size_t msg_len = n;
@@ -2052,16 +2144,16 @@ static int lua_http_sendmcasturl(lua_State* L)
                         }
                     }
 
-                    if (bytes_sent < 4022144)
+                    if (bytes_sent < M806_PROGRESS_LENGTH)
                     {
                         for (int i = 0; i < 7; i++)
                         {
                             mpeg2::mpeg2_ts* ts = (mpeg2::mpeg2_ts*)(buf + 188 * i);
                             mpeg2_packet packet(ts);
-                            packet.adjust_pts();
+                            packet.adjust_pts(3 * 60 * 60);
                         }
 
-                        int delta = 4022144 - bytes_sent;
+                        int delta = M806_PROGRESS_LENGTH - bytes_sent;
                         if (delta < n)
                         {
                             printf("[lua_http_sendmcasturl] epilog finished (bytes sent: %i)\n", bytes_sent + delta);
@@ -2084,13 +2176,10 @@ static int lua_http_sendmcasturl(lua_State* L)
             }
             else
             {
-                perror("[lua_http_sendmcasturl] socket timeout");
+                printf("[lua_http_sendmcasturl] socket timeout");
 
-                mainq.close();
-                mainq.unlink();
-
-                epilogq.close();
-                epilogq.unlink();
+                mainq.close(true);
+                epilogq.close(true);
             }
 
             free(buf);

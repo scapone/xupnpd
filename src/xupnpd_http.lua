@@ -656,10 +656,7 @@ function http_handler(what,from,port,msg)
 
             if flen == 4022144 then
                 http.sendmqueue("/epilog")
-               --ffrom = 0
             elseif ffrom == 1618044 then
-               --ffrom = 0
-               --flen = 4022143
                 http.sendmqueue("/main")
             else
                 http.sendfile(pls.path, ffrom, flen)
