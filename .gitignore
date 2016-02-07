@@ -1,2 +1,4 @@
 *.[oa]
 *.sw[po]
+src/localmedia/
+src/playlists/
