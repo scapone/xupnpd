@@ -87,8 +87,8 @@ namespace mpeg2
         message_queue(const char* name) : _mq(0), _name(name) {};
         ~message_queue() {};
         
-        void create(int maxmsg);
-        void open();
+        bool create(int maxmsg);
+        bool open();
         void close(bool unlink = false);
         int send(const char *msg_ptr, size_t msg_len);
         ssize_t receive(char *msg_ptr, size_t msg_len);

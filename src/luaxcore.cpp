@@ -1519,7 +1519,12 @@ static int lua_http_sendmqueue(lua_State* L)
     int bytes_sent = 0;
     
     message_queue mq(name);
-    mq.open();
+    
+    if (!mq.open())
+    {
+        close(dfd);
+        return 0;
+    }
     
     while((n = mq.receive(buf, sizeof(buf))) > 0)
     {
@@ -2071,7 +2076,7 @@ static int lua_http_sendmcasturl(lua_State* L)
             socklen_t sin_len=sizeof(sin);
 
             rc=1;
-            int bytes_sent = 0;
+            uint64_t bytes_sent = 0;
             bool mq_mode = false;
             
             /* create the message queues */
@@ -2104,7 +2109,7 @@ static int lua_http_sendmcasturl(lua_State* L)
                     {
                         if (mainq.send(buf, n) == -1)
                         {
-                            printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %i)\n", bytes_sent);
+                            printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %llu)\n", bytes_sent);
                             mainq.close();
                             break;
                         }                    
@@ -2115,13 +2120,13 @@ static int lua_http_sendmcasturl(lua_State* L)
 
                         if(nn == -1)
                         {
-                            printf("[lua_http_sendmcasturl] write to socket ended (bytes sent: %i)\n", bytes_sent);
+                            printf("[lua_http_sendmcasturl] write to socket ended (bytes sent: %llu)\n", bytes_sent);
                             close(dfd);
                             
                             mq_mode = true;
                         }
 
-                        int delta = bytes_sent - M806_STREAM_OFFSET;
+                        int64_t delta = bytes_sent - M806_STREAM_OFFSET;
                         if (delta > 0)
                         {
                             size_t msg_len = n;
@@ -2130,14 +2135,14 @@ static int lua_http_sendmcasturl(lua_State* L)
                             if (delta < n)
                             {
                                 msg_len = delta;
-                                msg_off = nn - msg_len;
+                                msg_off = n - msg_len;
                                 
                                 printf("[lua_http_sendmcasturl] /main, writing to queue started (offset: %i, length: %i)\n", msg_off, msg_len);
                             }
 
                             if (mainq.send(buf + msg_off, msg_len) == -1)
                             {
-                                printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %i)\n", bytes_sent);
+                                printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %llu)\n", bytes_sent);
                                 mainq.close();
                                 break;
                             }
@@ -2156,14 +2161,18 @@ static int lua_http_sendmcasturl(lua_State* L)
                         int delta = M806_PROGRESS_LENGTH - bytes_sent;
                         if (delta < n)
                         {
-                            printf("[lua_http_sendmcasturl] epilog finished (bytes sent: %i)\n", bytes_sent + delta);
+                            printf("[lua_http_sendmcasturl] epilog finished (bytes sent: %llu)\n", bytes_sent + delta);
                             
                             epilogq.send(buf, delta);
                             epilogq.close();
                         }
                         else
                         {
-                            epilogq.send(buf, n);
+                            if (epilogq.send(buf, n) == -1)
+                            {
+                                epilogq.close();
+                                break;
+                            }
                         }
                     }
 
@@ -2172,7 +2181,7 @@ static int lua_http_sendmcasturl(lua_State* L)
                     bytes_sent += n;
                 }
 
-                printf("[lua_http_sendmcasturl] main loop ended (bytes sent: %i)\n", bytes_sent);
+                printf("[lua_http_sendmcasturl] main loop ended (bytes sent: %llu)\n", bytes_sent);
             }
             else
             {

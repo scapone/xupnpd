@@ -169,7 +169,7 @@ bool mpeg2_packet::suppress_pid(mpeg2_ts* ts, int suppress_pid, int suppress_cou
     return false;
 }
 
-void message_queue::create(int maxmsg)
+bool message_queue::create(int maxmsg)
 {
     unlink();
 
@@ -188,11 +188,13 @@ void message_queue::create(int maxmsg)
     if (_mq == -1)
     {
         perror("[message_queue::create] Failed to create message queue");
-        return;
-    }    
+        return false;
+    }
+
+    return true;
 }
 
-void message_queue::open()
+bool message_queue::open()
 {
     printf("[message_queue::open] %s\n", _name);
 
@@ -202,11 +204,13 @@ void message_queue::open()
     if (_mq == -1)
     {
         perror("[message_queue::open] Failed to create message queue");
-        return;
+        return false;
     }
 
     int curmsgs = get_curmsgs();
     printf("[message_queue::open] %s, messages currently in queue: %i\n", _name, curmsgs);
+
+    return true;
 }
 
 void message_queue::close(bool unlink)
@@ -217,6 +221,7 @@ void message_queue::close(bool unlink)
     if (status == -1)
     {
         perror("[message_queue::close] Failed closing message queue");
+        return;
     }
 
     if (unlink)
@@ -249,7 +254,9 @@ int message_queue::send(const char *msg_ptr, size_t msg_len)
     int status = mq_timedsend(_mq, msg_ptr, msg_len, 0, &tm);
     if (status == -1)
     {
-        perror("[message_queue::send] Failed to send message");
+        printf("[message_queue::send] %s, ", _name);
+        perror("Failed to send message");
+        return status;
     }
 
     int curmsgs = get_curmsgs();   
