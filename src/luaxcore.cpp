@@ -2105,16 +2105,7 @@ static int lua_http_sendmcasturl(lua_State* L)
                         pnum++;
                     }  
 
-                    if (mq_mode)
-                    {
-                        if (mainq.send(buf, n) == -1)
-                        {
-                            printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %llu)\n", bytes_sent);
-                            mainq.close();
-                            break;
-                        }                    
-                    }
-                    else
+                    if (!mq_mode)
                     {
                         int nn = write(dfd, buf, n);
 
@@ -2125,27 +2116,27 @@ static int lua_http_sendmcasturl(lua_State* L)
                             
                             mq_mode = true;
                         }
+                    }
 
-                        int64_t delta = bytes_sent - M806_STREAM_OFFSET;
-                        if (delta > 0)
+                    int64_t delta = bytes_sent - M806_STREAM_OFFSET;
+                    if (delta > 0)
+                    {
+                        char *msg_ptr = buf;
+                        size_t msg_len = n;
+
+                        if (delta < n)
                         {
-                            size_t msg_len = n;
-                            int msg_off = 0;
+                            msg_len = delta;
+                            msg_ptr += n - delta;
+                            
+                            printf("[lua_http_sendmcasturl] /main, writing to queue started (offset: %i, length: %i)\n", msg_ptr - buf, msg_len);
+                        }
 
-                            if (delta < n)
-                            {
-                                msg_len = delta;
-                                msg_off = n - msg_len;
-                                
-                                printf("[lua_http_sendmcasturl] /main, writing to queue started (offset: %i, length: %i)\n", msg_off, msg_len);
-                            }
-
-                            if (mainq.send(buf + msg_off, msg_len) == -1)
-                            {
-                                printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %llu)\n", bytes_sent);
-                                mainq.close();
-                                break;
-                            }
+                        if (mainq.send(msg_ptr, msg_len) == -1)
+                        {
+                            printf("[lua_http_sendmcasturl] /main, queue is full (bytes sent: %llu)\n", bytes_sent);
+                            mainq.close();
+                            break;
                         }
                     }
 
